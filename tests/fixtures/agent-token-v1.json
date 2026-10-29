@@ -1,0 +1,833 @@
+{
+  "formatVersion": 1,
+  "name": "agent-token-v1",
+  "spec": "plans/0008-sdk-design.md",
+  "notes": "Cross-language conformance vectors for the AgentOnboard partner SDK.\n\nWHAT A PORT MUST DO. Take only the values in this file, and:\n(1) verify every token in \"verification\" using the audience, issuer and JWKS key set that case names, using only the public keys in \"keys\";\n(2) compare the verdict field by field — on success the exact verified email, on failure the exact failure code string;\n(3) apply the algorithm in \"audienceNormalization\" to each input and compare the result exactly;\n(4) for every case in \"account\", hand the named token to your account layer with the resolver behaving as that case describes, compare the outcome field by field, and then answer the HTTP request with the status that case names;\n(5) for every case in \"accountCreate\", do the same through the creating variant of that layer: the same resolver, plus the \"creator\" the case describes, and compare created and createCalls field by field as well;\n(6) turn a code into a status using \"statusMapping\", which is a rule and not a table: 401 unless the code is one of the three overrides.\nNo network access, no clock reading, and no private key of your own. A port passes if and only if it produces these verdicts.\n\nTHE FAILURE CODES ARE A FROZEN VOCABULARY. A port that invents a code, renames one, or returns a different code for the same condition has failed, however reasonable its reasoning. The reference verifier publishes the nine codes as VERIFY_ERROR_DESCRIPTIONS; read them from your own runtime's equivalent rather than from this file, so that a drift in either direction stays visible. The account layer adds two codes of its own, ACCOUNT_REQUIRED and RESOLVER_ERROR, and neither is a token code: in both, the token was fine.\n\nTHE ACCOUNT LAYER, AND WHY IT IS HERE. Verifying a token is half the SDK. The other half takes the verified email, hands it to a lookup the partner writes, and turns the result into a decision, and that is where the small decisions live that a dozen ports would each make differently. The reference implementation calls it verifyAgentAccount; yours will be named something else, which is fine, because what it must do is specified here and nowhere else.\nTHE TWO ACCOUNT FUNCTIONS, AND WHICH ARRAY PINS WHICH. \"account\" pins the verifying one: a resolver's null or undefined is the end of the request, and the outcome is ACCOUNT_REQUIRED. \"accountCreate\" pins the creating one, which takes that same resolver plus a second callback and makes an account when the resolver finds nothing. A partner opts in by calling the creating variant, so a port that implements only the verifying one fails \"accountCreate\" loudly instead of passing this file silently. The creating variant adds no failure code: its failures are the codes already here, and ACCOUNT_REQUIRED still means what it means — a partner that never calls it cannot create anything.\n\nIn \"accountCreate\", \"resolver\" behaves exactly as it does below, and \"creator\" says what the partner's insert does: {\"returns\":\"user\",\"value\":X} returns X, and {\"returns\":\"throw\"} throws. \"async\": true applies to either callback. Nothing about either callback is specified beyond that, because it is the partner's code.\nEach case in \"account\" names a token by the name of a case in \"verification\" and inherits that case's audience, issuer and key set, so no token string is written twice. \"resolver\" says what the partner's lookup does: {\"returns\":\"user\",\"value\":X} returns X, {\"returns\":\"null\"} returns null, {\"returns\":\"undefined\"} returns undefined, and {\"returns\":\"throw\"} throws. \"async\": true means the same value arrives in a promise rather than directly; a lookup that may be a database call has to be supported, and a lookup that may be synchronous has to be supported too. Nothing further about the lookup is specified, because it is the partner's code and not yours to reimplement.\nNine decisions are pinned by the cases below, and each is one a port gets wrong in a way that is either a security hole or a support ticket:\n  * null and undefined are the ONLY absences. They produce ACCOUNT_REQUIRED, and nothing else does.\n  * 0 and the empty string are user ids and resolve successfully. Reading either as \"no account\" reports a real user's account as missing.\n  * A resolver that throws is RESOLVER_ERROR: never ACCOUNT_REQUIRED, and never a token code. Reporting it as ACCOUNT_REQUIRED sends a human to fix an account that is perfectly fine.\n  * The resolver is not called at all for a token that did not verify, which is why expect.resolverCalls is 0 on those cases. A layer that looks the account up first will provision from an email nobody proved.\n  * The resolver receives one argument: an object with an email field and nothing else. No token, no claims, no request, no internal user id. Where expect.resolverIdentity is present, that object is it, exactly.\n  * A token that did not verify calls neither callback, which is why expect.resolverCalls and expect.createCalls are both 0 on those cases. Creating from an email nobody proved is how an unproved address becomes a real account.\n  * A resolver that returns a user means created is false and the creator is never called. A creating layer that inserts on a hit mints a second account for a human who already has one, on every request.\n  * A creator that throws is RESOLVER_ERROR, exactly like a resolver that throws, and its thrown value is never echoed onward. Reporting it as ACCOUNT_REQUIRED sends a human to fix an account that does not exist yet and will after the retry.\n  * The creator receives the same one argument the resolver does: the verified email, verbatim, and nothing else. Where expect.createIdentity is present, that object is it, exactly. There is no parameter to pass an email into a create call, which is what makes the account-takeover version of this unwritable rather than merely discouraged.\n\nexpect.resolverCalls is how many times the lookup was invoked, because a layer that cached a resolver's answer is how a deleted or banned account keeps working. expect.createCalls is how many times the insert was invoked, and expect.created says which of the two a success was.\n\nHOW A CODE BECOMES A STATUS. \"statusMapping\" is deliberately a rule rather than a table of every code, because the interesting half is the part that does not vary: answer 401 for anything your runtime reports, then replace the status for the three codes it names. 401 is uniform on purpose, since splitting it into 400, 419 and 503 hands anyone probing the endpoint a map of which part of a forgery attempt failed. The three exceptions are the cases where nobody's request is wrong: the token is good and the account is not (403, because re-authenticating cannot fix it and the action that can is connecting the account), or the failure is in the partner's own code or configuration (500, because a 401 there tells the agent its token is bad and buries a server fault where nobody looks for 500s). A port that answers 401 for ACCOUNT_REQUIRED has failed, and so has one that answers 401 for RESOLVER_ERROR or CONFIG_ERROR.\n\nformatVersion is 1. It increments only if this file changes in a way an existing port cannot survive. Adding a case is not such a change.\n\nWHY THE TOKENS ARE PRE-MINTED. What this file pins is the set of decisions a verifier makes. If a port had to sign these tokens itself, every language would reimplement our mint, and we would be testing that instead. So the tokens were minted once and committed. The valid token expires in 2100 rather than in the real five minutes, because a realistic expiry is dead five minutes after this file was written.\n\nWHAT THIS FILE DELIBERATELY DOES NOT COVER. No case depends on the current time, so the clock-skew boundary is absent: a token whose exp is two seconds in the past is valid today and expired in a year, and no committed file can hold that line. That boundary is proven by the SDK's own test suite instead, and a port should test it with an injected clock. For the same reason no case names KEY_SOURCE_UNAVAILABLE: it needs a JWKS endpoint that genuinely fails to respond, which is a property of a running harness rather than of a static file. It is still mapped, by the rule in \"statusMapping\": 401, like every other code your runtime reports. The reference implementation's own suite proves that one end to end, against a closed port.\n\nNothing here is real. The email addresses are RFC 2606 example domains, the issuers are reserved TLDs, and the signing keys were generated for this purpose and are published in plain sight.",
+  "keyMaterialNotice": "EVERY PRIVATE KEY IN THIS FILE IS A PUBLISHED, NON-SECRET TEST KEY. They were generated solely for this fixture, they protect nothing, and anyone can read them here. Never use them to sign anything real, never put them in a service, and never treat a token they signed as evidence of anything. Production signing keys never belong in a published file. The kid values are aon_fixture_v1 and aon_fixture_v1_retired; the production kid is aon_2026_v1, so a fixture token can never be confused with a real one.",
+  "keys": {
+    "active": {
+      "kid": "aon_fixture_v1",
+      "privateKeyPkcs8Pem": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDszn9KrTYQBQvH\nCef+Xkrhv5MLGraHeff4kxzLjWqAcP2bPYlyHcu461mKEFVKIqriPm1VKDq3/78v\nUAMe/f5WtoFf/BtPU9c61fSBc1C7e1aeFcTpJe57OYqmzX1HcmtjOnADJxRvqC5L\nxgw0b9lMswLDPIuqer4fXWRGkXZrEw0TFY60Jgask6YvT41YJorNmvmjli7eftyM\n8xWAlrgNCk4VIQbId8hQTbEKnVQHdJsVs7NhQ7htgWSTOPCg4npKTOK9hbVZcTGx\nlfoSLFP+2v4gtEB9j+OL4VTRd7tscBWS6pmysyLUuW8g54NEPDGOXz/fhxgFLfZH\ne0aHK2R9AgMBAAECggEAAu242EkVGpSdZSxDsLskzO7sGB6P9FP3U50qJYBNuWHs\nWP+lVAJ3UwWiGVmDXIPaPisMehmhxEXG7QRdzYPRoevm5LN++Pet+T3NJM6yyGbJ\nlvHo+gMslFyNUOvIqVoKZvNBkGBq2cioLeq4mutpMhAisBxvE8Ap2sRyaYcCAmf3\nUd3Orjr95V7waop1hoS7g6kEctCcnCikY7/czg3AcvhYcI0F6hB+M+A7krpPx/8d\ntCRODvJH+d4OaaiUg32QnnPBjUNknhsIeQucUyOdwp+O4aydqmZjaT7Y3/7PJ8DW\nnvR8GbrtYjwsJ/6FCeX0jm4/494cEkK/iuIfN2Xf9wKBgQD3LxhiWcdpWhfuqNgZ\nskQTFpHWgvTRJXRLINzOVlzGxCdmFxSkMw4zbHPyXFlcXqpxJrzd2MHi5DXx780x\nTKtRR1OpBmbn0HwOEeQxOl/NkJQbMcPP5ZP3T0nd03+N6dcD4GzWb8E/lpBEv6nv\n5xsXmsuT0UhqJYHENG9Xclm6bwKBgQD1QKbuHiUWz8WJQkgNeeY/Xm2z132ywphf\nE+JNgiyEj4txa/o8BZHtNneHvAqjEijbXLiMLPXG9cfOU4MQ9HydFSy1XcA9+saG\nnpAHdg+Eni+rbXCRwN7EFLZhZ+FjgGOSULNwwW+PzlShPxKb6vMorLqUK+9rRPYC\nfyzAVB510wKBgQDNPEZDywV+nPaIC5s6YsCRFMlMUfmR+kY/5u5PSHfJ9a483ucd\nmuKsodz3m+P6hQOB5cclcEcz64Y69n/p8h3A47c7/XvN+FY4nHRax3wqQ2Ql3EEY\nSid8TVIoo+Yh38nOhzX3Kl1LPelVm8ouzjW5eKaVekxlDfVcAql78w87cwKBgQCQ\n6MF5YqBhiSRbhKlUJRmRibbiE0p3DBnB29rUFz08miA3RSiWvGfLtGoN7mKOldVE\nP9XfJVWXWHPVimyf4QWcPv2qsBk9xeX1dsz9S5nBr0HVVZW02TQGwYI9rYZ0J1Eu\nC7bqwbCsVKqWl9DkBX/lIaIgmJEfXaDKOuBzR4Cz9wKBgDeUMemczzsfDitjg4jc\n3FQ0QHK+odbmcbym17Ez3hYJy4asmpaoxFDg8az4phdCuXpLfq/aMS+ul7VqcfMQ\n/eApqIdLFGhfrak5oReSqK2yB0d0qOJ3bfKvhiAjSPUcZAMU8BEF/wRGKucxkbnK\n2uKCBxoYcQ87Mqbw4QCgQn06\n-----END PRIVATE KEY-----",
+      "jwks": {
+        "keys": [
+          {
+            "kty": "RSA",
+            "n": "7M5_Sq02EAULxwnn_l5K4b-TCxq2h3n3-JMcy41qgHD9mz2Jch3LuOtZihBVSiKq4j5tVSg6t_-_L1ADHv3-VraBX_wbT1PXOtX0gXNQu3tWnhXE6SXuezmKps19R3JrYzpwAycUb6guS8YMNG_ZTLMCwzyLqnq-H11kRpF2axMNExWOtCYGrJOmL0-NWCaKzZr5o5Yu3n7cjPMVgJa4DQpOFSEGyHfIUE2xCp1UB3SbFbOzYUO4bYFkkzjwoOJ6SkzivYW1WXExsZX6EixT_tr-ILRAfY_ji-FU0Xe7bHAVkuqZsrMi1LlvIOeDRDwxjl8_34cYBS32R3tGhytkfQ",
+            "e": "AQAB",
+            "kid": "aon_fixture_v1",
+            "alg": "RS256",
+            "use": "sig"
+          }
+        ]
+      }
+    },
+    "retired": {
+      "kid": "aon_fixture_v1_retired",
+      "privateKeyPkcs8Pem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCVGfdeTAJbpSiR\n8BsA4tSwsr80Bmc6RlwaV81byliQPXxLsrpQWbb7wPh5kz4EbJzGgBbwHkHpLwCk\n5G5sNIP76+bleeNphio2cJCmZZGcacIiuDBfmtAgkQJYk8+yodvkHOqQHJk4UJ51\nc90G1rGLBUXmXHqcR6ryYJPHmKAllggz06aI2DsLdXZvV/3DtLXGGYkAwKAqnSMM\nyxHM9qaAP+KHOWL9p98xi2Pgdca1eWxUlxoVa84etkUwd6RHhCosTAhmA24K76sG\npiqlCTYQV1/dfzPuLg0K7cIq1gLltmHYT5/i0Km2N3l0f0f2TnNMMRMV1XOfnSgC\nHOhHom/5AgMBAAECggEAIlqqhrFcPLn79E4+ppBdIb55tDbCe6ihCZfP8xWXHNrx\n4+4xJBjbwruGdNqyiCnvYIQ8ZMSP+rav/w48DBX4kCfdWmPgfFyjpsn+ZjySVZf/\nmWjXinu89zf6MqcSDM5jADcSa7SPMCzRKe5Rj8URgN7s6WRHAvG3Z2PNwQg/ZBFI\nxFTo07wSHAJ/ufA52Flz+wmToKZ1V1pyePa9VovroGjJYx3lWy4BMDeecvySaEw7\nUpSmX5UmwUCfa42tHWa083PEPDpVzjTaGW0kf9+VlLMlRB9Nr1x6Ptfm2BfM3cJG\nQlgS2HUV0s2iphqqvYEZKJ5/f7EiKX2nCGygGpF1ZQKBgQDLmV1UTOr4cS+d3K8b\nEMf6JRdWr/nBOI/zBjnbRnkgLFEr6efjFPBs9Zx78g0I/QkkmMYhveyGNZXqJSVF\nCbR8tYNG0ijZdz+XH9vwFE/nP9gHt+SYlLbvtOmQorOPvU7x8kAOLJ2upTYWfoA3\nF3xTxOiv5706zyLNT9wD4tALNQKBgQC7eeM21tktZIH1ZzRurWSUQUJe5ibFntF+\nV90Nj6l17amsmdi6hRAW0EdFxltBqYaX0Ogf+qJ91jEJ//uJzkhHIGc0DiMhuK59\n3SGDsGvFvvWnaGUPBPvjJHNjLPCjJtvhhs1+lnnxV2EoK8v2btaNvz4/T983/ofZ\nSBFSD9VmNQKBgQDCNsXkiIsL+0xk1gLjWpqob4FX2/3u5znJpYLDPPKGUkAMF9Bv\nuaWvCov/X+I3VMjH9EPsI/PgAnXDKTPoK13UKIHVqNv2td4fFvECjx25hhlZI34Y\nXqQy/OxgYBPRZdBM071ux/iShF6YDovYAbtDXW5pfjHwS27zUt6Zhl7WkQKBgGD+\nr+qof9Z3YLGJwtvcQ+RcWy1kH/0wrSyT4t9oS4GjA500P6hIvck/2xAjjwVK40La\np64b60P1tIt68DYdDtIV1q9c/RouRcECzpsmhKvbn5cMcPSzXGrpafWOw7V1nl9x\nchIjYlXWIoM5HZ6TO9g8cMUq2s9Klhh5q9RsMrldAoGAHTZEkMZSLwzV1aV6FRiM\nDstZ6rdi7KDz5ynIwJfGhxXi1nHVlGCQPyzwwX1wvNOeBUHQoTOuR0oeDd1USQLm\n07pjd465jLs5U2/wZmJUEASy8dl9qvCx4qXvNKrwzMOaq/Xmfe+5ldwS0aSzv5A5\nujItLvlvvPFe5IZMkcJZbS0=\n-----END PRIVATE KEY-----",
+      "jwks": {
+        "keys": [
+          {
+            "kty": "RSA",
+            "n": "lRn3XkwCW6UokfAbAOLUsLK_NAZnOkZcGlfNW8pYkD18S7K6UFm2-8D4eZM-BGycxoAW8B5B6S8ApORubDSD--vm5XnjaYYqNnCQpmWRnGnCIrgwX5rQIJECWJPPsqHb5BzqkByZOFCedXPdBtaxiwVF5lx6nEeq8mCTx5igJZYIM9OmiNg7C3V2b1f9w7S1xhmJAMCgKp0jDMsRzPamgD_ihzli_affMYtj4HXGtXlsVJcaFWvOHrZFMHekR4QqLEwIZgNuCu-rBqYqpQk2EFdf3X8z7i4NCu3CKtYC5bZh2E-f4tCptjd5dH9H9k5zTDETFdVzn50oAhzoR6Jv-Q",
+            "e": "AQAB",
+            "kid": "aon_fixture_v1_retired",
+            "alg": "RS256",
+            "use": "sig"
+          }
+        ]
+      }
+    }
+  },
+  "audienceNormalization": [
+    {
+      "description": "A bare hostname is already normalized.",
+      "input": "notes.com",
+      "expected": "notes.com"
+    },
+    {
+      "description": "Scheme and path are discarded; the hostname survives.",
+      "input": "https://api.notes.com/v1/",
+      "expected": "api.notes.com"
+    },
+    {
+      "description": "An explicit port on a real hostname is discarded.",
+      "input": "http://notes.com:8080/data",
+      "expected": "notes.com"
+    },
+    {
+      "description": "Case is folded after the hostname is extracted.",
+      "input": "MYSERVICE.XYZ/path",
+      "expected": "myservice.xyz"
+    },
+    {
+      "description": "Userinfo is stripped along with the scheme, port and path: a URL-shaped input is parsed as a URL, so credentials in it cannot survive into the audience.",
+      "input": "https://user:pw@notes.com:8443/x",
+      "expected": "notes.com"
+    },
+    {
+      "description": "localhost is the one exception to port stripping — 'localhost:3000' keeps its port, because dropping it would collapse every local development port onto one audience.",
+      "input": "localhost:3000",
+      "expected": "localhost:3000"
+    },
+    {
+      "description": "localhost with an http protocol also keeps its port, matching schemeless localhost:3000.",
+      "input": "http://localhost:3000",
+      "expected": "localhost:3000"
+    },
+    {
+      "description": "localhost with an https protocol also keeps its port.",
+      "input": "https://localhost:3000",
+      "expected": "localhost:3000"
+    },
+    {
+      "description": "127.0.0.1 is also a loopback address and keeps its port.",
+      "input": "127.0.0.1:3000",
+      "expected": "127.0.0.1:3000"
+    },
+    {
+      "description": "127.0.0.1 with http protocol keeps its port.",
+      "input": "http://127.0.0.1:3000",
+      "expected": "127.0.0.1:3000"
+    },
+    {
+      "description": "localhost.evil.com has a localhost prefix but is a different host, so its port is stripped.",
+      "input": "localhost.evil.com:3000",
+      "expected": "localhost.evil.com"
+    },
+    {
+      "description": "localhost.evil.com with http protocol also has its port stripped.",
+      "input": "http://localhost.evil.com:3000",
+      "expected": "localhost.evil.com"
+    },
+    {
+      "description": "A port on a schemeless input is still discarded. This and the localhost case above are the two halves of the port rule; a port that implements only one of them fails here.",
+      "input": "notes.com:8443",
+      "expected": "notes.com"
+    },
+    {
+      "description": "A hostname that merely ends with the expected audience is a different hostname. Normalization never collapses a suffix, or a verifier would accept notes.com.evil.com.",
+      "input": "notes.com.evil.com",
+      "expected": "notes.com.evil.com"
+    },
+    {
+      "description": "The same suffix trap, reached through the URL-parsing branch.",
+      "input": "https://notes.com.evil.com/x",
+      "expected": "notes.com.evil.com"
+    },
+    {
+      "description": "Empty input normalizes to empty input, with no error and no guess.",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "description": "A bare path has no hostname, so it normalizes to \"\". This is the input that turns into CONFIG_ERROR rather than a token check, which is why it belongs in this list too.",
+      "input": "/",
+      "expected": ""
+    }
+  ],
+  "verification": [
+    {
+      "name": "happy_path_far_future_exp",
+      "description": "The baseline. A correctly minted token for the right audience, signed by the key in the key set it is verified against. Its exp is in 2100 so this case stays true forever; the real five-minute lifetime is proven by the SDK's own test suite, not here.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEifQ.QyWHu6CMxbWfuFp-HLwm6tXwdeQeh2M5MCDj8X1Vog5L5yYs5LnstBkaVZMXxGHVxUHWd1cLHI5lfmEnIFXSl_LgYUTlp9cPgBalxUUgXH73duxxXCVaIQYClbaFdBhMuQoUsiWZV7-FJTUUK8lpiWNKTsd4zfkumpj1wg9n6L5i43cCiwNU8x9HEW5EIlxHfEP_3ryAcbGbcpmuFi97Q0AUv47NYcoQD_ad5WErm1QZerZUZCOEMmvGZUqcSnJLM7MDE-ELQyquxiQjToyI9cZ_nYlZiBoEPtzJwAn8c0xzvKzuESE5Q9DbuLrZTatCPGUpJ38TPeZHhYAkMVb-wA",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "sub": "agent.fixture@example.com",
+        "userId": "agent.fixture@example.com",
+        "jti": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "name": "email_claim_is_handed_over_verbatim",
+      "description": "A padded, mixed-case email must arrive exactly as minted — no lowercasing, no trimming, no normalization. Our own account rows are not guaranteed lowercase, and this SDK does not quietly paper over that: the case policy belongs in the partner's resolver, where they can see it, rather than hidden in a comparison they did not write. A port that normalizes here fails this case.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6IiAgQWdlbnQuRml4dHVyZUBFeGFtcGxlLkNPTSAgIiwiaXNzIjoiaHR0cHM6Ly9hZ2VudG9uYm9hcmQudGVzdCIsInN1YiI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJhdWQiOiJub3Rlcy5jb20iLCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6NDEwMjQ0NDgwMCwianRpIjoiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIn0.BRhTfcDn1jGhvYrHS-O_SydVpNGUcgxLF1ebahGvW5m4zihuhbBkkoPn0ytlNVKHE6nRfkg77Mb_tCR-F31gOMAZQzesH2IXd1gYtcnH0sMl6IhGq3JHKTfYAtORNlH6MdwwV8sxGX_lUI5Lm3yDhKaChqE2ELY7lmBSxPqpnSrBvde5CtvSEATsx4f81TzRhCOJqgZE2WSbq4QWCnpezCwr0mEG4jg8eV_bmZmqXTo55XT9a0rmotT1YgQYk7TbQ_vVP1YKK1FoUVnbxk072M7V8oVo2u0litWPHQPdYu3FOBFfgUMNzc4wOrQA40UJVGqg5FkBjTtiQrR-16utfg",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": true,
+        "email": "  Agent.Fixture@Example.COM  ",
+        "sub": "agent.fixture@example.com",
+        "userId": "agent.fixture@example.com",
+        "jti": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "name": "bearer_scheme_prefix_is_accepted",
+      "description": "The same token as happy_path_far_future_exp, with the Authorization scheme still attached. Verifiers are handed a raw Authorization header value, so stripping 'Bearer ' is part of the contract, case-insensitively.",
+      "keySet": "active",
+      "token": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEifQ.QyWHu6CMxbWfuFp-HLwm6tXwdeQeh2M5MCDj8X1Vog5L5yYs5LnstBkaVZMXxGHVxUHWd1cLHI5lfmEnIFXSl_LgYUTlp9cPgBalxUUgXH73duxxXCVaIQYClbaFdBhMuQoUsiWZV7-FJTUUK8lpiWNKTsd4zfkumpj1wg9n6L5i43cCiwNU8x9HEW5EIlxHfEP_3ryAcbGbcpmuFi97Q0AUv47NYcoQD_ad5WErm1QZerZUZCOEMmvGZUqcSnJLM7MDE-ELQyquxiQjToyI9cZ_nYlZiBoEPtzJwAn8c0xzvKzuESE5Q9DbuLrZTatCPGUpJ38TPeZHhYAkMVb-wA",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com"
+      }
+    },
+    {
+      "name": "retired_key_verifies_against_retired_jwks_only",
+      "description": "A token signed by the key this partner published before rotating it. Because this case serves keys.retired.jwks, the verdict is a pass. Pair it with unknown_kid_signed_by_rotated_out_key, which serves keys.active.jwks and rejects the identical token: together they prove the verdict is a function of the JWKS the verifier was handed, so a verifier that hard-codes one public key fails one of the two.",
+      "keySet": "retired",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxX3JldGlyZWQifQ.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMTEifQ.Cz3WOSCFY1rt1HHIuy1RWITR3CGhVEV0-bswY-PotnwzSC_qedf86RFlr3pmhRUcNMUKLjSaTX0iBTFNMk-3l9mNx_KJiMUZDNMCFUFZ1ZVHr3qAsdC16pCM4Tsw1sfhUL31v1Jx76ZmxFSJuKvU2TUPMZSSUGM_KdB93K5qrUL-NYaJx8Bix8pDMnYtFaC9EwQrBFGx4WrlbgDv-_RoRxgDmJ7fWxaR_YWwA0fZxo4jcLlL2EfxRnVOtvcih3nYm8Hsy4caxAYZuXAWkj7qHT7QuyD_AFKz94TLgDrEV7WckRYGNBoQuhvHA_4YCkTy78FS5u9wCzQBK_91j03z4A",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com"
+      }
+    },
+    {
+      "name": "expired_token",
+      "description": "exp is 2020-01-01T00:05:00Z, years beyond any clock-skew tolerance. A past exp only gets more past, so this case cannot rot.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTU3NzgzNjgwMCwiZXhwIjoxNTc3ODM3MTAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIifQ.WUZdtO16lvdfXII_JLmLEbep7au_EMThGfFtPDR67CTctU8DU9Ti8DnUe5O5HTy_caUh2xV6f92PPOFTjw4_0AIseE53WeVKXP8hiTmQYNkXbTL3cAFgiv_vUmHUIko1DuMJpF6M-dvsgpHDtMOHTE1ee0gAk4g0ceuX2L6kt0o6wo1bxM2RDiluYGfro7L6rP5JvsLvLnMIZb204m8Z48JoM6mIU4QoNrAGpsoFLg8hUL2qNAUdJcjb4VAS5RVLpluSvLoLf4vQTIFxkfaRp4GNqHJM81-tskcvrdV1V-DRcz70bMRpag8CkbY0Yd8xDElcwAhWZ9svzhzPp6i_RQ",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "EXPIRED"
+      }
+    },
+    {
+      "name": "wrong_audience",
+      "description": "A token minted for attacker-service.com, verified by a partner expecting notes.com. This is the replay a partner protects against: a token stolen from another service must not open this one.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6ImF0dGFja2VyLXNlcnZpY2UuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjQxMDI0NDQ4MDAsImp0aSI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMyJ9.Zz9ENhGGqA3MQv9q20S2njjk9mmLU-jAjk1An10_Pqr-pLR6F4bAumGd9PHu-vZ0tn1OQc1nfV_3kk1SdwqGq10irGJEqE68YsU2FRUYA89zp2BKOIKt1f_q2NL8J67In6o0TBMXJw4Un1qd2UNaMbtgogPaqBiDOu42FF6xOhhfgE4R6LDlBuleINk5Ukt7BYt7SRVBA5O2R01NbQAroYQiSzXWwmXEoyOFDppIzVyeWx5OW82CJUJIH9-Eb2YqcIlFuUDSK_vPigTdacKmotKtDu9d8yDKI9ekLu4-El8vZjVUmLHuq294r4DEv850k8BC0RGN460WjhZdGTQGow",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "AUDIENCE_MISMATCH"
+      }
+    },
+    {
+      "name": "audience_suffix_attack_notes_com_evil_com",
+      "description": "The token was minted for \"notes.com.evil.com\" and the partner expects \"notes.com\". Audience matching is full equality, never prefix, never suffix: notes.com.evil.com is not notes.com. A verifier that compares hostnames loosely passes this and is exploitable.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbS5ldmlsLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDQifQ.3KrRy6-ZOk067yLFyP2DUVZTsigbJdwSLlY7rdWttlvyQ3QRTOW508yu18mgdGec1lLrnicG1zt8Hki3PbZfqbVOdh2FzJGtqPqw6P3GL_vptqhfQ_TwMzoAgorBmWZe_kLwhAGZBKUvstqMKiof1ps2eQ1lkockL4BjbWYiOXKlR8td1FFlBLwzRp1cpeT8IRJV-9ZM7OFu5xRqGeC0Yy5QoqskKZiYnQiTiZ3cKBs93H73bFaosJ38CO3BvrB_yeSBbTpnJBtDCTYCkt1GU4TNAN2LxG2-7LJWSIe8Eq0j77M9jSGsd-EXOR3ovVBJtzEoG7ErnusHDqcsofu-Rw",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "AUDIENCE_MISMATCH"
+      }
+    },
+    {
+      "name": "missing_audience_claim",
+      "description": "The token carries no aud claim at all. Absence is not consent to any audience, so this is a rejection, not a wildcard pass.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDUifQ.H_TKD_d7RjrGaRgOe5e5TwhEZ0C7GpwbrKiRSSwp9fhOYNrNpuqoG1MOhP17ghvxGdPf2jsX4_zshl7c95JkTejTrFygJJnwK2F28iIOA4SG0d7y8OZ76wdbBS--MJMCUq1VIzUfxuXkWdte8ekh6A7-qiRO7UFDqnC9i7WyDxI4K-GxB1lJqL2Zle_5KX5djKYQikYoJZdjPvlmTXGPMfspUIyOfHmjbYvGmdloIjkhAPUuSmXVXpx627iPE8RnbQ27Vlz5klgIw8gxE3UfQjsa3S74ylUjmwDRQaollkaHKzN5VdbN266b3RzfN2pazmWFIo1dJzDbJuNAzZPnaA",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "AUDIENCE_MISMATCH"
+      }
+    },
+    {
+      "name": "wrong_issuer",
+      "description": "The token claims iss attacker.invalid while the partner expects agentonboard.test. A verifier that never reads iss accepts this; one that reads it and compares exactly rejects it.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2F0dGFja2VyLmludmFsaWQiLCJzdWIiOiJhZ2VudC5maXh0dXJlQGV4YW1wbGUuY29tIiwiYXVkIjoibm90ZXMuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjQxMDI0NDQ4MDAsImp0aSI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNiJ9.s9tZTO0ipmGE40Sdk_qFDb2WiAlVgAjp-ce2WdxDhkrWJp37-5PLsqLw0K0s4ebe_oAUEpda-AIebmRbmt9NL4ay7pmGeQ8ahxDeGuWXAZ6byI2_LkSP7Qb8_EqCcboaDsdcF1W8YDNK-gwo1qlcfQDDm9VSP_n2qG-IE4Rf3ILd2hkWYU-OvpHC41xZCPo-23fULyqzeDWY8NzpLM-8h9AWGS_2UGl_5VV-dBFhyLfD7Z50ma-Qq7VzSa8BBBsqHoowVTvclGHqhUilXpCPrecZeTfeheQA_dL5ncJ1z-K8zpoZIu6VIyIRRJmbfxtnufikIkvmExJGhKY4tlj3lQ",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "ISSUER_MISMATCH"
+      }
+    },
+    {
+      "name": "missing_issuer_claim",
+      "description": "The token carries no iss claim. A verifier that only compares iss when it is present passes this, which lets a forged token that simply omits the claim through.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJzdWIiOiJhZ2VudC5maXh0dXJlQGV4YW1wbGUuY29tIiwiYXVkIjoibm90ZXMuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjQxMDI0NDQ4MDAsImp0aSI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwNyJ9.wawa48648UWzKTW9hoPvPrXiXjf3GJ-vwj_Io1epOiBfiY4xoPyXRINcIg7csuZdAYhpZlOn5rFHdJuzeD0YybLkvct_vFfKI_2vCypQ_8gO7vYijE-9t40CoxHk5uZq_tGVDP82MQ4lFp0zXuicHHU_QKaA1b7ciAGhinSytH_fux43YzTGjd5yaiXQTnsOCkzQV_30JpyFzROMncvVeBGEZ1mnxeY_iqBvZ0NvAjM43-HIUYwVVl9SGBgqHAEITjn0l5Dry9rvbVDqHV06m0kFuS28u3gS9mk-4WxVZHvwpQZvEtxZmdx21nqfleUERtPCVsJishtfvfxpQlBRtw",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "ISSUER_MISMATCH"
+      }
+    },
+    {
+      "name": "signature_from_another_key_with_matching_kid",
+      "description": "Signed by the retired private key but stamped with the active kid, so the JWKS lookup succeeds and only the signature itself can reject it. A verifier that trusts kid as proof of authenticity passes this and accepts forged tokens.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMTAifQ.V8qT6ryA08O1nlfsJ264T6RpLl4PHNxtscJjjdYzBcC1MdlMD2vG49tgqCbORz4qsO3qg9eK-hNPsEserVjEnAS3Iq1WcqGMvcD7WZeIbg4JFECCfBep61yPMpVAE8W9B9z_35LncIXznnCluBjGQOr1nvZ-TuC17lIG4lvWmVIHPmY8nRraWE7914Ox4XVFhj7m7NcOzCj8QPMMI2w2Us6hLXh80HD_md24GSQht6Vr8ElXuqdHVwixa8G68qkzhYWE-OPjR3zAhJZB1dg_0v1LcI-nn1MHznTYJKeouwqSgDt1XniYsTelG1bilSzto_XpiBL2g7QnH5FmVSxhxw",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "INVALID_SIGNATURE"
+      }
+    },
+    {
+      "name": "unknown_kid_signed_by_rotated_out_key",
+      "description": "Signed by the key this partner published before rotating it away, and verified against the key set published after the rotation. The kid resolves to nothing, which is the revoked-key case: an already-issued token stops verifying the moment its key is dropped.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxX3JldGlyZWQifQ.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMTEifQ.Cz3WOSCFY1rt1HHIuy1RWITR3CGhVEV0-bswY-PotnwzSC_qedf86RFlr3pmhRUcNMUKLjSaTX0iBTFNMk-3l9mNx_KJiMUZDNMCFUFZ1ZVHr3qAsdC16pCM4Tsw1sfhUL31v1Jx76ZmxFSJuKvU2TUPMZSSUGM_KdB93K5qrUL-NYaJx8Bix8pDMnYtFaC9EwQrBFGx4WrlbgDv-_RoRxgDmJ7fWxaR_YWwA0fZxo4jcLlL2EfxRnVOtvcih3nYm8Hsy4caxAYZuXAWkj7qHT7QuyD_AFKz94TLgDrEV7WckRYGNBoQuhvHA_4YCkTy78FS5u9wCzQBK_91j03z4A",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "UNKNOWN_KEY"
+      }
+    },
+    {
+      "name": "unknown_kid_never_published",
+      "description": "The header claims kid \"aon_fixture_v1_never_published\", which was never in any key set. The kid decides which key to try, so an unknown kid must be rejected before any signature is examined — and must not be treated as a reason to fetch every key.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxX25ldmVyX3B1Ymxpc2hlZCJ9.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMTIifQ.AYQvXPHIG2ehXP2T1bOx-eABsq36UWDZ7IowM13WE-3Wn72f3CbRdhPuHJHTnFMtKqQjUea72qMJA6Y80TECBkzQCoSzvrrxzcpJqpv7xANuXouTZpvv6eDffWl1CJ4KStPLtasgRzyA2mkSoletBaeYdRFK8nBeAvY2_NTE_wiT_JpxXXbVP1fvXFIP1b1rn0tKZ91ZlawScYBTfwBHWs6kjKF2HfV0PV0cGFokDUqbAYWBeJ7oXej21o6R3EbQyTMxZIiDWosD1C8LwbWPXH1DAWH4Uuh6TMRQtEDqusnkyet6LlSZmIR18I2wYSyehKfM_S4lOYt-mv74qlwAag",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "UNKNOWN_KEY"
+      }
+    },
+    {
+      "name": "algorithm_confusion_hs256_signed_with_public_key",
+      "description": "A compact JWS whose alg is HS256, carrying the active kid, and HMAC-signed with the public verification key — the classic algorithm-confusion attack. Only RS256 is ever accepted, and the token's own header never chooses the algorithm, so this is INVALID_SIGNATURE rather than a successful verification. The signature bytes are a genuine HMAC; a verifier that trusted the header would accept the token.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMTMifQ.Rmd6N2MP5Hi2UGah8tdLustWXdbiTz7iKdmJT-sefQM",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "INVALID_SIGNATURE"
+      }
+    },
+    {
+      "name": "malformed_token_garbage",
+      "description": "Not a compact JWS at all. Rejected before any key is fetched.",
+      "keySet": "active",
+      "token": "not-a-jwt",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "MALFORMED_TOKEN"
+      }
+    },
+    {
+      "name": "malformed_token_empty",
+      "description": "The empty string, which is what a missing or blank Authorization header reduces to. Rejected as a malformed token, not treated as an anonymous-but-valid request.",
+      "keySet": "active",
+      "token": "",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "MALFORMED_TOKEN"
+      }
+    },
+    {
+      "name": "malformed_token_two_segments",
+      "description": "Two dot-separated segments. A compact JWS has three, and a truncated token is malformed, not unverifiable.",
+      "keySet": "active",
+      "token": "aon.eyJhbGciOiJSUzI1NiJ9",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "MALFORMED_TOKEN"
+      }
+    },
+    {
+      "name": "malformed_token_header_is_not_json",
+      "description": "Three well-formed segments, but the first decodes to the ASCII text 'hello' rather than to JSON. Rejecting this needs a JSON parse failure mapped to the same code as a missing segment, which is why it is a separate case.",
+      "keySet": "active",
+      "token": "aGVsbG8.d29ybGQ.c2ln",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "MALFORMED_TOKEN"
+      }
+    },
+    {
+      "name": "missing_email_claim",
+      "description": "A valid signature over a token with no email claim. Verification proves identity, and email is the only identity that crosses the boundary, so a token without one cannot identify anybody and is a rejection rather than a pass with an empty field.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDgifQ.QT0GDSHp84BuhlZ-TZBoXdV-hmgpfv1uI8psz1g44sIU8ZiexFC0bI2hNNNLlLyfKkoA-ff4Oa7HnWe7RI17_dOVuS1dsvtyFDPhUZ1yZPY4nRERksKuXiUP4FfpKQUJwovXsr5dLcMHo6xzCMk01wKLfZ5FStmNfsiZZrDaXTQFmWB6XKeXXe5Zs1e09i_AjDhkE1ZOIc_SZlyzUMAGtjOttI7CKJovki10byZdRSFdvqLs579uNIL-04Lxn99ItKlGUiAYLonrkoa5xUMGv3Y8KDo5D0sbFX851f0hWaKWeT_qLdgNW0W34YVzFqvQ21B87GeQRlEwxgD4geHb0g",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "MISSING_EMAIL"
+      }
+    },
+    {
+      "name": "email_claim_is_not_a_string",
+      "description": "The email claim is the number 42. Presence checks are not type checks: a verifier that only tests whether the claim exists passes this and then hands a partner the number 42 as an identity.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6NDIsImlzcyI6Imh0dHBzOi8vYWdlbnRvbmJvYXJkLnRlc3QiLCJzdWIiOiJhZ2VudC5maXh0dXJlQGV4YW1wbGUuY29tIiwiYXVkIjoibm90ZXMuY29tIiwiaWF0IjoxNzY3MjI1NjAwLCJleHAiOjQxMDI0NDQ4MDAsImp0aSI6IjAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwOSJ9.JJWrDE4WSyt_50ZOAxzM0d-9acFSVJrm_1TOFGcdF8vhBroxxlr_rzhESu2xQqdmV59NwxRJpFWYgoBRLeU-Cjy7OkPz5_hGsDStMnLJBBXolVqGbK95MueCsNDfscRf2fSTE902TgtBxK3gEQMJfYZoLyphPiS0ua1bBWNYw0mYL9zm6GXut5sI9TWCxFaysZxHNCMUisiEByAc4pFUjarcjNbZszVrTj730Y14S5weCHaoZcYlNnlivAmPJ5sHWCERZN7NK5iyE1Zx4gJT8MytT3Ia4ZiNNlfXJLEhPFOUrWFZ4A6A2zvLH53yVYhwyEHoSKTw2lIWu3CgRiHPgQ",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "MISSING_EMAIL"
+      }
+    },
+    {
+      "name": "missing_jti_claim",
+      "description": "A valid signature over a token with no jti. jti is the replay key: a partner cannot detect a replayed token without one, so a token without it is rejected. It carries no code of its own — it is a required claim this SDK depends on, so the verdict is a malformed token.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.XuZaFQ2KZtRgJqU3PUMRVL5ZDFM0IFkQVjNNOYDdGJMqeW5P1-s2UQwEoing6un2Bb6RYV7brcMVLQoAwDCuq4WgnRZPXb_eIejAtaRHWxLsEfeG4gPhYoXHfXcwsfVrQbBgzWtTiLcIYcpQKVUgMnLngDBF3PYognUQQetI2hGqkTZK7RuTiyi-LujkZtL6mW-SCQYQy1Drbf7jN1oLtjQJeEOV3083_M0CThUpGAuZvso7GfViFzX1TWPYMR1m12sdPeg4LhByz3lgZ-xOYMlU7lBNdVBbfolm2S_oGWKNFSlnnoUbIpDc2eAzYHwSa3vXHW74WrgmkmbbelEr9A",
+      "audience": "notes.com",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "MALFORMED_TOKEN"
+      }
+    },
+    {
+      "name": "config_error_empty_audience",
+      "description": "The token is valid and the partner's own configuration is wrong: the audience was not passed at all. Rejecting a valid token because the call was wrong keeps the caller's bug visible as a configuration bug instead of hiding it behind an authentication failure.",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEifQ.QyWHu6CMxbWfuFp-HLwm6tXwdeQeh2M5MCDj8X1Vog5L5yYs5LnstBkaVZMXxGHVxUHWd1cLHI5lfmEnIFXSl_LgYUTlp9cPgBalxUUgXH73duxxXCVaIQYClbaFdBhMuQoUsiWZV7-FJTUUK8lpiWNKTsd4zfkumpj1wg9n6L5i43cCiwNU8x9HEW5EIlxHfEP_3ryAcbGbcpmuFi97Q0AUv47NYcoQD_ad5WErm1QZerZUZCOEMmvGZUqcSnJLM7MDE-ELQyquxiQjToyI9cZ_nYlZiBoEPtzJwAn8c0xzvKzuESE5Q9DbuLrZTatCPGUpJ38TPeZHhYAkMVb-wA",
+      "audience": "",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "CONFIG_ERROR"
+      }
+    },
+    {
+      "name": "config_error_audience_normalizes_to_empty",
+      "description": "The partner passed the audience \"/\" — a non-empty string that normalizes to no hostname at all. The same CONFIG_ERROR applies: the call cannot identify an intended audience, so a token must not be accepted against \"\".",
+      "keySet": "active",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImFvbl9maXh0dXJlX3YxIn0.eyJlbWFpbCI6ImFnZW50LmZpeHR1cmVAZXhhbXBsZS5jb20iLCJpc3MiOiJodHRwczovL2FnZW50b25ib2FyZC50ZXN0Iiwic3ViIjoiYWdlbnQuZml4dHVyZUBleGFtcGxlLmNvbSIsImF1ZCI6Im5vdGVzLmNvbSIsImlhdCI6MTc2NzIyNTYwMCwiZXhwIjo0MTAyNDQ0ODAwLCJqdGkiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEifQ.QyWHu6CMxbWfuFp-HLwm6tXwdeQeh2M5MCDj8X1Vog5L5yYs5LnstBkaVZMXxGHVxUHWd1cLHI5lfmEnIFXSl_LgYUTlp9cPgBalxUUgXH73duxxXCVaIQYClbaFdBhMuQoUsiWZV7-FJTUUK8lpiWNKTsd4zfkumpj1wg9n6L5i43cCiwNU8x9HEW5EIlxHfEP_3ryAcbGbcpmuFi97Q0AUv47NYcoQD_ad5WErm1QZerZUZCOEMmvGZUqcSnJLM7MDE-ELQyquxiQjToyI9cZ_nYlZiBoEPtzJwAn8c0xzvKzuESE5Q9DbuLrZTatCPGUpJ38TPeZHhYAkMVb-wA",
+      "audience": "/",
+      "issuer": "https://agentonboard.test",
+      "expect": {
+        "ok": false,
+        "code": "CONFIG_ERROR"
+      }
+    }
+  ],
+  "statusMapping": {
+    "description": "How a failure code becomes an HTTP status, as a rule rather than a table of every code. The part that does not vary is the interesting part, so it is stated once: answer 401 for any code your runtime reports, then replace the status for the three codes in overrides. A port that splits the 401s has failed even though every case above still passes.",
+    "default": 401,
+    "defaultAppliesTo": "every code this SDK publishes, and every code a port adds of its own: a 401 there is a uniform \"we do not know who you are\" that tells a prober nothing about which part of a forgery attempt failed",
+    "overrides": [
+      {
+        "code": "ACCOUNT_REQUIRED",
+        "status": 403,
+        "description": "The token verified. The human has no account at the partner, which is not an authentication failure: re-authenticating cannot create an account, and a 401 would hide the one action that can, which is connecting the account and retrying."
+      },
+      {
+        "code": "RESOLVER_ERROR",
+        "status": 500,
+        "description": "The partner's own lookup threw. Nobody's request is wrong, so it is not a 401: that tells the agent its token is bad and invites a re-authentication loop against a token that is fine."
+      },
+      {
+        "code": "CONFIG_ERROR",
+        "status": 500,
+        "description": "The call itself is wrong: no audience, an audience that is not a hostname, a JWKS URL that will not parse, a nonsensical clock tolerance. The integrator's bug, reported as a server fault, because it is one and because nobody looks for 500s under a 401."
+      }
+    ]
+  },
+  "account": [
+    {
+      "name": "resolver_returning_a_user_resolves",
+      "description": "The baseline: a good token, a lookup that returns a user id, and the account layer hands back that id and the verified email. This is also the case that pins the resolver's argument, which is an object with an email field and nothing else, and that the lookup runs exactly once.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "user",
+        "value": "partner_user_1"
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": "partner_user_1",
+        "resolverCalls": 1,
+        "resolverIdentity": {
+          "email": "agent.fixture@example.com"
+        }
+      }
+    },
+    {
+      "name": "resolver_may_be_a_promise",
+      "description": "The same case with the value arriving in a promise, because a real lookup is a database call. A layer that only awaits a synchronous return type works until a partner's first async resolver, and then it either hangs or passes the promise through as the user id.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "user",
+        "value": "partner_user_1",
+        "async": true
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": "partner_user_1",
+        "resolverCalls": 1
+      }
+    },
+    {
+      "name": "resolver_receives_the_email_verbatim",
+      "description": "A padded, mixed-case email must reach the resolver byte-for-byte. This is the case that makes the policy checkable rather than merely documented: our account rows are not guaranteed lowercase, and a layer that normalizes here hides that behind a comparison the partner never wrote. Normalize in the resolver, where it is visible — and where it can be the column's policy rather than the SDK's guess. Asserted through resolverIdentity, because the core's own email claim is a different code path and cannot see this.",
+      "token": "email_claim_is_handed_over_verbatim",
+      "resolver": {
+        "returns": "user",
+        "value": "partner_user_1"
+      },
+      "expect": {
+        "ok": true,
+        "email": "  Agent.Fixture@Example.COM  ",
+        "user": "partner_user_1",
+        "resolverCalls": 1,
+        "resolverIdentity": {
+          "email": "  Agent.Fixture@Example.COM  "
+        }
+      }
+    },
+    {
+      "name": "resolver_returning_null_is_account_required",
+      "description": "null is an absence. The token verified, so this is not an authentication failure, and the one action that can fix it is for the human to connect their account.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "null"
+      },
+      "expect": {
+        "ok": false,
+        "code": "ACCOUNT_REQUIRED",
+        "status": 403,
+        "resolverCalls": 1
+      }
+    },
+    {
+      "name": "resolver_returning_undefined_is_account_required",
+      "description": "undefined is the other absence, and the one a JavaScript lookup returns by falling off the end. It is spelled as its own case because it is the value a port is most likely to treat differently from null.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "undefined"
+      },
+      "expect": {
+        "ok": false,
+        "code": "ACCOUNT_REQUIRED",
+        "status": 403,
+        "resolverCalls": 1
+      }
+    },
+    {
+      "name": "resolver_returning_zero_is_a_user_id",
+      "description": "0 is a user id in the wild, not an absence. A layer that reads any falsy value as \"no account\" reports a real user as missing, and the account layer is exactly where that mistake gets made: the value comes straight out of a nullable column.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "user",
+        "value": 0
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": 0,
+        "resolverCalls": 1
+      }
+    },
+    {
+      "name": "resolver_returning_empty_string_is_a_user_id",
+      "description": "The same decision about the other falsy value. Together with the 0 case, this pins the rule: only null and undefined are absences.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "user",
+        "value": ""
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": "",
+        "resolverCalls": 1
+      }
+    },
+    {
+      "name": "resolver_throwing_is_resolver_error",
+      "description": "A lookup that throws is the partner's own fault, and the thrown value is never reported onward: a database connection error carries postgres://user:pw@db.internal:5432, and that string would otherwise land in the partner's error aggregator and in the 500 body the caller can read. expect.errorExcludes lists fragments that must appear nowhere in the failure.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "throw",
+        "message": "connection refused: postgres://svc:hunter2@db.internal:5432/prod"
+      },
+      "expect": {
+        "ok": false,
+        "code": "RESOLVER_ERROR",
+        "status": 500,
+        "resolverCalls": 1,
+        "errorExcludes": [
+          "postgres://",
+          "hunter2",
+          "db.internal"
+        ]
+      }
+    },
+    {
+      "name": "a_core_rejection_keeps_its_code_through_the_account_layer",
+      "description": "A wrong-audience token is a token problem, and the account layer passes the core's code through unchanged rather than translating it into something of its own. The lookup is not called: a layer that resolves first will provision an account from an email that was never proved.",
+      "token": "wrong_audience",
+      "resolver": {
+        "returns": "user",
+        "value": "partner_user_1"
+      },
+      "expect": {
+        "ok": false,
+        "code": "AUDIENCE_MISMATCH",
+        "status": 401,
+        "resolverCalls": 0
+      }
+    },
+    {
+      "name": "an_expired_token_never_reaches_the_lookup",
+      "description": "The same rule from the other end of the token's life. The email in an expired token was genuine when it was minted, which is exactly why a lookup that ran first would treat it as current.",
+      "token": "expired_token",
+      "resolver": {
+        "returns": "user",
+        "value": "partner_user_1"
+      },
+      "expect": {
+        "ok": false,
+        "code": "EXPIRED",
+        "status": 401,
+        "resolverCalls": 0
+      }
+    },
+    {
+      "name": "a_config_error_reaches_the_caller_as_a_server_fault",
+      "description": "The partner's own misconfiguration, inherited from the case this one names: the audience was \"/\", which normalizes to no hostname at all. The token is fine and the call is not, so this is 500 rather than the uniform 401 — which is the whole reason CONFIG_ERROR is one of the three overrides in statusMapping, and the one a port is most likely to get wrong because every other code in this file is a 401.",
+      "token": "config_error_audience_normalizes_to_empty",
+      "resolver": {
+        "returns": "user",
+        "value": "partner_user_1"
+      },
+      "expect": {
+        "ok": false,
+        "code": "CONFIG_ERROR",
+        "status": 500,
+        "resolverCalls": 0
+      }
+    }
+  ],
+  "accountCreate": [
+    {
+      "name": "a_miss_creates_the_account_and_says_so",
+      "description": "The baseline for the creating function, and the reason it exists: a good token, a lookup that finds nothing, and a creator that returns a user. The outcome carries that user with created true, which is the fact a partner's audit log needs and the fact an agent needs in order to report honestly. A layer that creates but cannot say whether it created is indistinguishable from one that signed in.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "null"
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_new",
+        "async": true
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": "partner_user_new",
+        "created": true,
+        "resolverCalls": 1,
+        "createCalls": 1,
+        "createIdentity": {
+          "email": "agent.fixture@example.com"
+        }
+      }
+    },
+    {
+      "name": "a_hit_signs_in_without_calling_the_creator",
+      "description": "The resolver found the account, so the creator is never invoked and created is false. This is the replay case: the same agent calling twice inside one token's five-minute life finds the account it just made rather than making a second one. A creating layer that inserts on a hit mints a duplicate account for a human who already has one, on every request they make.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "user",
+        "value": "partner_user_1"
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_duplicate"
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": "partner_user_1",
+        "created": false,
+        "resolverCalls": 1,
+        "createCalls": 0
+      }
+    },
+    {
+      "name": "undefined_is_a_miss_too",
+      "description": "undefined is the other absence, and the one a JavaScript lookup returns by falling off the end. It creates rather than rejecting, which is the same rule as null: only null and undefined mean \"no account\", and a miss is what the creating function is for.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "undefined"
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_new"
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": "partner_user_new",
+        "created": true,
+        "resolverCalls": 1,
+        "createCalls": 1
+      }
+    },
+    {
+      "name": "a_forged_token_reaches_neither_callback",
+      "description": "A wrong-audience token is rejected before either of the partner's functions runs, and both call counts are 0. This is the case that matters most in the creating function: the resolver is called first in the creating order only relative to the creator, never relative to verification. A layer that looks the account up before verifying the token will create an account from an email that was never proved, which is the whole failure this file exists to prevent.",
+      "token": "wrong_audience",
+      "resolver": {
+        "returns": "null"
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_forged"
+      },
+      "expect": {
+        "ok": false,
+        "code": "AUDIENCE_MISMATCH",
+        "status": 401,
+        "resolverCalls": 0,
+        "createCalls": 0
+      }
+    },
+    {
+      "name": "an_expired_token_reaches_neither_callback",
+      "description": "The same rule from the other end of the token's life. The email in an expired token was genuine when it was minted, which is exactly why a layer that resolved or created before verifying would treat it as current.",
+      "token": "expired_token",
+      "resolver": {
+        "returns": "null"
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_expired"
+      },
+      "expect": {
+        "ok": false,
+        "code": "EXPIRED",
+        "status": 401,
+        "resolverCalls": 0,
+        "createCalls": 0
+      }
+    },
+    {
+      "name": "a_throwing_creator_is_resolver_error_not_account_required",
+      "description": "A database fault in the partner's own insert is RESOLVER_ERROR at 500, never ACCOUNT_REQUIRED at 403. Reporting it as a missing account is worse here than in the verifying function: the account genuinely does not exist yet, so ACCOUNT_REQUIRED would send the human off to connect an account that is not there, and the retry would create a second attempt at the same insert. The thrown value is never echoed — a failed insert usually carries a connection string, and it can carry the name of your uniqueness constraint too — and expect.errorExcludes lists fragments that must appear nowhere in the failure.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "null"
+      },
+      "creator": {
+        "returns": "throw",
+        "message": "duplicate key value violates unique constraint users_email_unique: postgres://svc:hunter2@db.internal:5432/prod"
+      },
+      "expect": {
+        "ok": false,
+        "code": "RESOLVER_ERROR",
+        "status": 500,
+        "resolverCalls": 1,
+        "createCalls": 1,
+        "errorExcludes": [
+          "postgres://",
+          "hunter2",
+          "db.internal",
+          "users_email_unique"
+        ]
+      }
+    },
+    {
+      "name": "a_throwing_resolver_never_reaches_the_creator",
+      "description": "The lookup runs first and it threw, so the outcome is RESOLVER_ERROR and the creator is not called. A creating layer that treats a failed lookup as a miss would insert on the strength of an exception — the one case where the email was proved but the database said nothing.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "throw",
+        "message": "connection refused: postgres://svc:hunter2@db.internal:5432/prod"
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_after_a_fault"
+      },
+      "expect": {
+        "ok": false,
+        "code": "RESOLVER_ERROR",
+        "status": 500,
+        "resolverCalls": 1,
+        "createCalls": 0,
+        "errorExcludes": [
+          "postgres://",
+          "hunter2",
+          "db.internal"
+        ]
+      }
+    },
+    {
+      "name": "the_creator_receives_the_email_verbatim",
+      "description": "A padded, mixed-case email reaches the creator byte-for-byte, exactly as it reaches the resolver. Asserted through createIdentity because the identity is built once and handed to both callbacks, and a layer that normalized on the way to the creator would insert a differently-cased address than the one it looked up — a second account for the same inbox, created by the same layer that was supposed to prevent it.",
+      "token": "email_claim_is_handed_over_verbatim",
+      "resolver": {
+        "returns": "null"
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_new"
+      },
+      "expect": {
+        "ok": true,
+        "email": "  Agent.Fixture@Example.COM  ",
+        "user": "partner_user_new",
+        "created": true,
+        "resolverCalls": 1,
+        "createCalls": 1,
+        "createIdentity": {
+          "email": "  Agent.Fixture@Example.COM  "
+        }
+      }
+    },
+    {
+      "name": "the_creator_sees_only_the_email_and_the_creator_gets_no_way_to_be_told_which",
+      "description": "The creator's one argument has an email field and nothing else — no token, no claims, no request, no internal user id, and no second parameter to accept an address the caller supplied. That last part is what makes the account-takeover version of this unwritable rather than merely discouraged: there is nowhere to put an email that did not come from the token that was just verified. Where expect.createIdentity is present, that object is it, exactly.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "null"
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_new"
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": "partner_user_new",
+        "created": true,
+        "resolverCalls": 1,
+        "createCalls": 1,
+        "createIdentity": {
+          "email": "agent.fixture@example.com"
+        }
+      }
+    },
+    {
+      "name": "a_creator_may_be_synchronous",
+      "description": "The same case with the insert arriving directly rather than in a promise. A real insert is a database call and needs the promise path; an in-memory store does not, and a port that awaits only one of the two works until a partner ships the other.",
+      "token": "happy_path_far_future_exp",
+      "resolver": {
+        "returns": "null",
+        "async": true
+      },
+      "creator": {
+        "returns": "user",
+        "value": "partner_user_new"
+      },
+      "expect": {
+        "ok": true,
+        "email": "agent.fixture@example.com",
+        "user": "partner_user_new",
+        "created": true,
+        "resolverCalls": 1,
+        "createCalls": 1
+      }
+    }
+  ]
+}

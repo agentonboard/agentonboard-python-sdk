@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentonboard"
+version = "0.1.0"
+description = "Universal identity layer for AI agents — Python Partner SDK for token verification and account creation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "AgentOnboard", email = "hello@agentonboard.xyz" }
+]
+keywords = ["agentonboard", "ai-agents", "authentication", "identity", "jwt", "fastapi", "flask"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx>=0.25.0",
+    "pyjwt[crypto]>=2.8.0",
+]
+
+[project.optional-dependencies]
+fastapi = [
+    "fastapi>=0.100.0",
+    "starlette>=0.27.0",
+]
+flask = [
+    "flask>=2.0.0",
+]
+all = [
+    "agentonboard[fastapi,flask]",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "mypy>=1.9.0",
+    "cryptography>=42.0.0",
+    "fastapi>=0.100.0",
+    "flask>=2.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentonboard"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    "B008",  # FastAPI Depends in parameter defaults is idiomatic
+    "E501",  # Line length handled by formatter
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
