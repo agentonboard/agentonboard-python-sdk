@@ -26,9 +26,7 @@ async def test_fastapi_adapter(fixture_data):
     async def protected_endpoint(identity: AgentIdentity = Depends(auth)):
         return {"email": identity.email}
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # 1. Missing header
         res = await client.get("/protected")
         assert res.status_code == 401

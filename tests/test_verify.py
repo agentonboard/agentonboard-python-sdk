@@ -41,7 +41,9 @@ def test_sync_verification_vectors(fixture_data):
         else:
             exp_code = expected["code"]
             assert res.ok is False, f"[{cname}] Expected ok=False, got {res}"
-            assert res.code == exp_code, f"[{cname}] Code mismatch: got {res.code}, expected {exp_code}"
+            assert res.code == exp_code, (
+                f"[{cname}] Code mismatch: got {res.code}, expected {exp_code}"
+            )
 
 
 @pytest.mark.asyncio
@@ -69,4 +71,6 @@ async def test_async_verification_vectors(fixture_data):
         else:
             exp_code = expected["code"]
             assert res.ok is False, f"[{cname}] Expected ok=False, got {res}"
-            assert res.code == exp_code, f"[{cname}] Code mismatch: got {res.code}, expected {exp_code}"
+            assert res.code == exp_code, (
+                f"[{cname}] Code mismatch: got {res.code}, expected {exp_code}"
+            )

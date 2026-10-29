@@ -59,9 +59,7 @@ class AgentBearerAuth(SecurityBase, Generic[TUser]):
         self.jwks_url = jwks_url
         self.jwks = jwks
 
-    async def __call__(
-        self, request: Request
-    ) -> AgentIdentity | TUser:
+    async def __call__(self, request: Request) -> AgentIdentity | TUser:
         credentials: HTTPAuthorizationCredentials | None = await self.bearer(request)
         if not credentials or not credentials.credentials:
             raise HTTPException(

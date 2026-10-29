@@ -7,8 +7,17 @@ import hashlib
 import sys
 from pathlib import Path
 
-CANONICAL_PATH = Path(__file__).resolve().parent.parent.parent / "agentonboard" / "packages" / "sdk" / "vectors" / "agent-token-v1.json"
-LOCAL_FIXTURE_PATH = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "agent-token-v1.json"
+CANONICAL_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "agentonboard"
+    / "packages"
+    / "sdk"
+    / "vectors"
+    / "agent-token-v1.json"
+)
+LOCAL_FIXTURE_PATH = (
+    Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "agent-token-v1.json"
+)
 
 
 def sha256_of(p: Path) -> str:
@@ -28,7 +37,10 @@ def main():
         return 0
 
     if "--check" in sys.argv:
-        print(f"ERROR: Local fixture {LOCAL_FIXTURE_PATH} differs from {CANONICAL_PATH}!", file=sys.stderr)
+        print(
+            f"ERROR: Local fixture {LOCAL_FIXTURE_PATH} differs from {CANONICAL_PATH}!",
+            file=sys.stderr,
+        )
         return 1
 
     LOCAL_FIXTURE_PATH.write_bytes(CANONICAL_PATH.read_bytes())

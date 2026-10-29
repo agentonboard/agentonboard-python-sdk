@@ -13,4 +13,6 @@ def test_audience_normalization_vectors():
         input_str = case["input"]
         expected = case["expected"]
         result = normalize_audience(input_str)
-        assert result == expected, f"Failed on {case['description']}: got {result!r}, expected {expected!r}"
+        assert result == expected, (
+            f"Failed on {case['description']}: got {result!r}, expected {expected!r}"
+        )

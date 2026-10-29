@@ -119,8 +119,7 @@ class KeySource:
 
         now = time.time()
         should_fetch = (
-            self.last_known_good is None
-            or (now - self.last_fetch_time) > CACHE_MAX_AGE_SECONDS
+            self.last_known_good is None or (now - self.last_fetch_time) > CACHE_MAX_AGE_SECONDS
         )
 
         if not should_fetch and self.last_known_good is not None:
@@ -183,8 +182,7 @@ class KeySource:
 
         now = time.time()
         should_fetch = (
-            self.last_known_good is None
-            or (now - self.last_fetch_time) > CACHE_MAX_AGE_SECONDS
+            self.last_known_good is None or (now - self.last_fetch_time) > CACHE_MAX_AGE_SECONDS
         )
 
         if not should_fetch and self.last_known_good is not None:

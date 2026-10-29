@@ -68,9 +68,9 @@ def test_sync_account_vectors(fixture_data):
         exp = case["expect"]
         assert len(resolver_seen) == exp["resolverCalls"], f"[{cname}] resolverCalls mismatch"
         if exp.get("resolverIdentity"):
-            assert (
-                resolver_seen[0].email == exp["resolverIdentity"]["email"]
-            ), f"[{cname}] resolverIdentity mismatch"
+            assert resolver_seen[0].email == exp["resolverIdentity"]["email"], (
+                f"[{cname}] resolverIdentity mismatch"
+            )
         if exp["ok"]:
             assert outcome.ok is True, f"[{cname}] Expected ok=True"
             assert outcome.user == exp["user"], f"[{cname}] user mismatch"
@@ -110,13 +110,13 @@ def test_sync_account_create_vectors(fixture_data):
         assert len(resolver_seen) == exp["resolverCalls"], f"[{cname}] resolverCalls mismatch"
         assert len(creator_seen) == exp["createCalls"], f"[{cname}] createCalls mismatch"
         if exp.get("resolverIdentity"):
-            assert (
-                resolver_seen[0].email == exp["resolverIdentity"]["email"]
-            ), f"[{cname}] resolverIdentity mismatch"
+            assert resolver_seen[0].email == exp["resolverIdentity"]["email"], (
+                f"[{cname}] resolverIdentity mismatch"
+            )
         if exp.get("createIdentity"):
-            assert (
-                creator_seen[0].email == exp["createIdentity"]["email"]
-            ), f"[{cname}] createIdentity mismatch"
+            assert creator_seen[0].email == exp["createIdentity"]["email"], (
+                f"[{cname}] createIdentity mismatch"
+            )
         if exp["ok"]:
             assert outcome.ok is True, f"[{cname}] Expected ok=True"
             assert outcome.user == exp["user"], f"[{cname}] user mismatch"

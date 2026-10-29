@@ -48,11 +48,14 @@ result = await verify_agent_token_async(
 ```python
 from agentonboard import verify_agent_account, create_agent_account, AgentIdentity
 
+
 def find_user_by_email(identity: AgentIdentity):
     return db.query(User).filter(User.email == identity.email).first()
 
+
 def create_user_for_agent(identity: AgentIdentity):
     return db.create_user(email=identity.email)
+
 
 # Read-only verification
 outcome = verify_agent_account(

@@ -33,7 +33,9 @@ def test_assert_jwk_set_validation():
 
     # Invalid base64url characters in RSA n
     with pytest.raises(KeySourceUnavailableError):
-        assert_jwk_set({"keys": [{"kty": "RSA", "kid": "k1", "n": "not+valid=b64url", "e": "AQAB"}]})
+        assert_jwk_set(
+            {"keys": [{"kty": "RSA", "kid": "k1", "n": "not+valid=b64url", "e": "AQAB"}]}
+        )
 
 
 def test_lru_cache_bounded_to_max():

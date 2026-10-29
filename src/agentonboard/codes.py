@@ -73,4 +73,3 @@ def status_from_code(code: str | None) -> int:
     if code in ("RESOLVER_ERROR", "CONFIG_ERROR"):
         return 500
     return 401
-
