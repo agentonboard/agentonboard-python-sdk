@@ -1,17 +1,17 @@
-# agentonboard (Python SDK)
+# agentonboard-sdk (Python Partner SDK)
 
 The Python partner SDK for [AgentOnboard](https://agentonboard.xyz) — verify ephemeral agent session tokens and safely resolve or provision partner accounts.
 
 ## Installation
 
 ```bash
-pip install agentonboard
+pip install agentonboard-sdk
 ```
 
 Optional framework shortcuts:
 ```bash
-pip install "agentonboard[fastapi]"
-pip install "agentonboard[flask]"
+pip install "agentonboard-sdk[fastapi]"
+pip install "agentonboard-sdk[flask]"
 ```
 
 ## Quickstart
