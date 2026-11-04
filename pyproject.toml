@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentonboard-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Universal identity layer for AI agents — Python Partner SDK for token verification and account creation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = "MIT"
 authors = [
     { name = "AgentOnboard", email = "hello@agentonboard.xyz" }
 ]
-keywords = ["agentonboard", "ai-agents", "authentication", "identity", "jwt", "fastapi", "flask"]
+keywords = ["agentonboard", "ai-agents", "authentication", "identity", "jwt", "fastapi", "flask", "django"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -39,8 +39,11 @@ fastapi = [
 flask = [
     "flask>=2.0.0",
 ]
+django = [
+    "django>=4.2",
+]
 all = [
-    "agentonboard-sdk[fastapi,flask]",
+    "agentonboard-sdk[fastapi,flask,django]",
 ]
 dev = [
     "pytest>=8.0.0",
@@ -50,6 +53,7 @@ dev = [
     "cryptography>=42.0.0",
     "fastapi>=0.100.0",
     "flask>=2.0.0",
+    "django>=4.2",
 ]
 
 [tool.hatch.build.targets.wheel]
