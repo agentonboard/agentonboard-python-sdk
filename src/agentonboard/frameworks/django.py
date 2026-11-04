@@ -9,7 +9,7 @@ import inspect
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, JsonResponse  # type: ignore[import-untyped]
 
 from agentonboard.account import (
     AccountCreator,
@@ -91,7 +91,7 @@ def require_agent_token(
                         )
 
                     identity = AgentIdentity(email=res.email or "")
-                    request.agent_identity = identity  # type: ignore[attr-defined]
+                    request.agent_identity = identity
                     if wants_identity:
                         kwargs["agent_identity"] = identity
                     return await fn(request, *args, **kwargs)
@@ -100,8 +100,8 @@ def require_agent_token(
                     outcome = await create_agent_account_async(
                         token=token,
                         audience=audience,
-                        resolver=resolver,  # type: ignore[arg-type]
-                        creator=creator,  # type: ignore[arg-type]
+                        resolver=resolver,
+                        creator=creator,
                         issuer=issuer,
                         jwks_url=jwks_url,
                         jwks=jwks,
@@ -110,7 +110,7 @@ def require_agent_token(
                     outcome = await verify_agent_account_async(
                         token=token,
                         audience=audience,
-                        resolver=resolver,  # type: ignore[arg-type]
+                        resolver=resolver,
                         issuer=issuer,
                         jwks_url=jwks_url,
                         jwks=jwks,
@@ -123,8 +123,8 @@ def require_agent_token(
                     )
 
                 identity = AgentIdentity(email=outcome.email or "")
-                request.agent_identity = identity  # type: ignore[attr-defined]
-                request.agent_user = outcome.user  # type: ignore[attr-defined]
+                request.agent_identity = identity
+                request.agent_user = outcome.user
                 if wants_user:
                     kwargs["agent_user"] = outcome.user
                 if wants_identity:
@@ -161,7 +161,7 @@ def require_agent_token(
                     )
 
                 identity = AgentIdentity(email=res.email or "")
-                request.agent_identity = identity  # type: ignore[attr-defined]
+                request.agent_identity = identity
                 if wants_identity:
                     kwargs["agent_identity"] = identity
                 return fn(request, *args, **kwargs)
@@ -170,8 +170,8 @@ def require_agent_token(
                 outcome = create_agent_account(
                     token=token,
                     audience=audience,
-                    resolver=resolver,  # type: ignore[arg-type]
-                    creator=creator,  # type: ignore[arg-type]
+                    resolver=resolver,
+                    creator=creator,
                     issuer=issuer,
                     jwks_url=jwks_url,
                     jwks=jwks,
@@ -180,7 +180,7 @@ def require_agent_token(
                 outcome = verify_agent_account(
                     token=token,
                     audience=audience,
-                    resolver=resolver,  # type: ignore[arg-type]
+                    resolver=resolver,
                     issuer=issuer,
                     jwks_url=jwks_url,
                     jwks=jwks,
@@ -193,8 +193,8 @@ def require_agent_token(
                 )
 
             identity = AgentIdentity(email=outcome.email or "")
-            request.agent_identity = identity  # type: ignore[attr-defined]
-            request.agent_user = outcome.user  # type: ignore[attr-defined]
+            request.agent_identity = identity
+            request.agent_user = outcome.user
             if wants_user:
                 kwargs["agent_user"] = outcome.user
             if wants_identity:

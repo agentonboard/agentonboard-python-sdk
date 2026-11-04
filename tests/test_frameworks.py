@@ -116,9 +116,9 @@ def test_django_adapter(fixture_data):
         audience="notes.com",
         issuer="https://agentonboard.test",
         jwks=jwks,
-        resolver=lambda identity: "user_123"
-        if identity.email == "agent.fixture@example.com"
-        else None,
+        resolver=lambda identity: (
+            "user_123" if identity.email == "agent.fixture@example.com" else None
+        ),
     )
     def protected_view(request, agent_user: str):
         return JsonResponse({"user": agent_user, "attr": request.agent_user})
